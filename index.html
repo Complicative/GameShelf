@@ -10,6 +10,7 @@
 </head>
 <body>
   <button id="filter-panel-toggle" class="filter-panel-toggle" type="button" aria-controls="category-filter-panel" aria-expanded="false" aria-label="Show category and mechanic filters" title="Show filters">»</button>
+  <button id="bgg-users-panel-toggle" class="bgg-users-panel-toggle" type="button" aria-controls="bgg-users-panel" aria-expanded="true" aria-label="Hide BGG users" title="Hide BGG users">»</button>
   <div class="app-layout filter-collapsed">
     <aside id="category-filter-panel" class="filter-panel category-filter" aria-labelledby="category-filter-title" aria-hidden="true">
       <div class="filter-panel-header">
@@ -38,10 +39,38 @@
       <div id="category-filters" class="filter-list"></div>
     </aside>
     <main id="library" class="library" aria-label="Board game collection" aria-live="polite">
+      <div class="library-toolbar">
+        <label class="sort-control">
+          <span>Sort by</span>
+          <select id="game-sort" aria-label="Sort games">
+            <option value="alphabetical">Alphabetical</option>
+            <option value="rating">BGG average</option>
+            <option value="complexity">Complexity</option>
+            <option value="players-ascending">Player amount (ascending)</option>
+            <option value="players-descending">Player amount (descending)</option>
+            <option value="time-ascending">Play time (ascending)</option>
+            <option value="time-descending">Play time (descending)</option>
+          </select>
+        </label>
+      </div>
       <div id="game-grid" class="game-grid">
         <p class="message">Loading your games…</p>
       </div>
     </main>
+    <aside id="bgg-users-panel" class="filter-panel bgg-users-panel" aria-labelledby="bgg-users-title" aria-hidden="false">
+      <div class="filter-panel-header">
+        <h2 id="bgg-users-title" class="filter-title">Users</h2>
+      </div>
+      <div id="bgg-user-list" class="bgg-user-list" aria-label="Select BGG users"></div>
+      <form id="bgg-user-form" class="bgg-user-form">
+        <div class="custom-name-row">
+          <input id="bgg-user-input" class="custom-name-input" type="text" maxlength="100" autocomplete="off" required>
+          <button class="custom-name-save" type="submit">Add</button>
+        </div>
+      </form>
+      <p id="bgg-user-status" class="bgg-user-status" role="status" aria-live="polite"></p>
+      <button id="save-bgg-default" class="custom-name-save bgg-default-save" type="button">Save as default</button>
+    </aside>
   </div>
   <dialog id="details" aria-labelledby="detail-title">
     <button id="close" class="close" aria-label="Close game details">×</button>

@@ -1,10 +1,18 @@
 const gameGrid = document.querySelector('#game-grid');
+const gameSort = document.querySelector('#game-sort');
 const categoryFilters = document.querySelector('#category-filters');
 const dialog = document.querySelector('#details');
 const content = document.querySelector('#detail-content');
 const appLayout = document.querySelector('.app-layout');
 const filterPanel = document.querySelector('#category-filter-panel');
 const filterPanelToggle = document.querySelector('#filter-panel-toggle');
+const bggUsersPanel = document.querySelector('#bgg-users-panel');
+const bggUsersPanelToggle = document.querySelector('#bgg-users-panel-toggle');
+const bggUserList = document.querySelector('#bgg-user-list');
+const bggUserStatus = document.querySelector('#bgg-user-status');
+let bggUsers = [];
+let selectedBGGUsers = new Set();
+let gamesLoadSequence = 0;
 let games = [];
 let selectedTaxonomy = new Set();
 let selectedLanguages = new Set();
@@ -26,6 +34,24 @@ function updateFilterPanel() {
   filterPanel.inert = isCollapsed;
 }
 
+function updateBggUsersPanel() {
+  const isCollapsed = appLayout.classList.contains('users-collapsed');
+  bggUsersPanelToggle.textContent = isCollapsed ? '«' : '»';
+  bggUsersPanelToggle.classList.toggle('is-open', !isCollapsed);
+  bggUsersPanelToggle.setAttribute('aria-expanded', String(!isCollapsed));
+  bggUsersPanelToggle.setAttribute('aria-label', `${isCollapsed ? 'Show' : 'Hide'} BGG users`);
+  bggUsersPanelToggle.title = `${isCollapsed ? 'Show' : 'Hide'} BGG users`;
+  bggUsersPanel.setAttribute('aria-hidden', String(isCollapsed));
+  bggUsersPanel.inert = isCollapsed;
+}
+
+const mobileLayout = window.matchMedia('(max-width: 570px)');
+if (mobileLayout.matches) appLayout.classList.add('users-collapsed');
+mobileLayout.addEventListener('change', event => {
+  appLayout.classList.toggle('users-collapsed', event.matches);
+  updateBggUsersPanel();
+});
+
 function getVisibleColumnCount() {
   const cards = [...gameGrid.children].filter(element => element.classList.contains('game'));
   if (!cards.length) return 1;
@@ -44,6 +70,12 @@ filterPanelToggle.addEventListener('click', () => {
   updateFilterPanel();
 });
 updateFilterPanel();
+updateBggUsersPanel();
+
+bggUsersPanelToggle.addEventListener('click', () => {
+  appLayout.classList.toggle('users-collapsed');
+  updateBggUsersPanel();
+});
 
 document.querySelector('#close').addEventListener('click', () => dialog.close());
 dialog.addEventListener('click', e => { if (e.target === dialog) dialog.close(); });
@@ -51,6 +83,56 @@ dialog.addEventListener('click', e => { if (e.target === dialog) dialog.close();
 const escapeHTML = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const range = (a,b) => a && b ? (a === b ? a : `${a}–${b}`) : (a || b || 'Unknown');
 const minutes = game => game.minTime && game.maxTime && game.minTime !== game.maxTime ? `${game.minTime}–${game.maxTime} min` : game.time ? `${game.time} min` : 'Unknown time';
+const alphabeticalCompare = (a, b) => String(a.name ?? '').localeCompare(String(b.name ?? ''), undefined, { sensitivity: 'base', numeric: true });
+const numericValue = value => value === '' || value === null || value === undefined || !Number.isFinite(Number(value)) ? null : Number(value);
+function compareByNumericValue(a, b, getValue, direction) {
+  const aValue = numericValue(getValue(a));
+  const bValue = numericValue(getValue(b));
+  if (aValue === null || bValue === null) {
+    if (aValue === bValue) return alphabeticalCompare(a, b);
+    return aValue === null ? 1 : -1;
+  }
+  return direction * (aValue - bValue) || alphabeticalCompare(a, b);
+}
+function getSortValue(game, sort) {
+  switch (sort) {
+    case 'rating':
+      return numericValue(game.rating);
+    case 'complexity':
+      return numericValue(game.weight);
+    case 'players-ascending':
+      return numericValue(game.minPlayers);
+    case 'players-descending':
+      return numericValue(game.maxPlayers);
+    case 'time-ascending':
+      return numericValue(game.minTime || game.time);
+    case 'time-descending':
+      return numericValue(game.maxTime || game.time);
+    default:
+      return null;
+  }
+}
+function getSortGroup(value, sort) {
+  if (value === null) {
+    const label = sort === 'rating' || sort === 'complexity'
+      ? 'Not rated'
+      : sort.startsWith('players-')
+        ? 'Unknown player count'
+        : 'Unknown play time';
+    return { key: 'unknown', label };
+  }
+  if (sort === 'players-ascending' || sort === 'players-descending') {
+    const bound = sort === 'players-ascending' ? 'Minimum' : 'Maximum';
+    return { key: String(value), label: `${bound} ${value} player${value === 1 ? '' : 's'}` };
+  }
+  const interval = sort.startsWith('time-') ? 30 : 1;
+  const threshold = Math.floor(value / interval) * interval;
+  if (sort.startsWith('time-') && threshold === 0) {
+    return { key: String(threshold), label: 'Under 30 min' };
+  }
+  const suffix = sort === 'rating' ? ' BGG average' : sort === 'complexity' ? ' complexity' : ' min';
+  return { key: String(threshold), label: `${threshold}+${suffix}` };
+}
 const languageOptions = [
   { name: 'English', flag: '🇬🇧' },
   { name: 'German', flag: '🇩🇪' }
@@ -81,7 +163,7 @@ async function saveCustomName(game, input, button) {
     game.customName = result.customName || '';
     game.name = game.customName || game.originalName || game.name;
     button.textContent = 'Saved';
-    await load();
+    await loadGames();
     dialog.close();
   } catch (error) {
     button.textContent = 'Save failed';
@@ -107,7 +189,7 @@ async function saveLanguages(game, button) {
     if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
     game.languages = result.languages;
     button.textContent = 'Saved';
-    await load();
+    await loadGames();
     setTimeout(() => { button.textContent = 'Save languages'; }, 1200);
   } catch (error) {
     console.error(error);
@@ -139,7 +221,7 @@ async function saveCustomCategories(game, customCategories, input, button) {
     game.categories = [...new Set([...game.apiCategories, ...game.customCategories])];
     renderCustomCategories(game);
     input.value = '';
-    await load();
+    await loadGames();
   } catch (error) {
     console.error(error);
     input.setCustomValidity(error.message);
@@ -156,6 +238,7 @@ function openGame(game) {
     <div><h2 class="detail-title" id="detail-title">${escapeHTML(game.name)}</h2>
       <p class="year">${game.year ? escapeHTML(game.year) : 'Board game'}</p>
       <div class="facts">${fact('Players',range(game.minPlayers,game.maxPlayers))}${fact('Playtime',minutes(game))}${fact('BGG average',game.rating ? `${Number(game.rating).toFixed(1)} / 10` : 'Not rated')}${fact('Complexity',game.weight ? `${Number(game.weight).toFixed(2)} / 5` : 'Not rated')}${fact('Minimum age',game.minAge ? `${game.minAge}+` : 'Unknown')}</div>
+      ${game.owners?.length ? `<h3 class="section-title">Owned by</h3><div class="tags">${game.owners.map(owner => `<span class="tag">${escapeHTML(owner)}</span>`).join('')}</div>` : ''}
       <div class="custom-name-panel">
         <label for="custom-name-input" class="custom-name-label">Custom name</label>
         <div class="custom-name-row">
@@ -264,6 +347,30 @@ function renderFilters() {
   }
 }
 
+function renderBggUsers() {
+  bggUserList.replaceChildren();
+  for (const username of bggUsers) {
+    const row = document.createElement('div');
+    row.className = 'bgg-user-option';
+    const selectButton = document.createElement('button');
+    selectButton.type = 'button';
+    selectButton.className = 'bgg-user-select';
+    selectButton.classList.toggle('is-selected', selectedBGGUsers.has(username));
+    selectButton.setAttribute('aria-pressed', String(selectedBGGUsers.has(username)));
+    selectButton.dataset.username = username;
+    selectButton.textContent = username;
+    const deleteButton = document.createElement('button');
+    deleteButton.type = 'button';
+    deleteButton.className = 'bgg-user-delete';
+    deleteButton.setAttribute('aria-label', `Delete ${username}`);
+    deleteButton.title = `Delete ${username}`;
+    deleteButton.dataset.deleteUsername = username;
+    deleteButton.textContent = '×';
+    row.append(selectButton, deleteButton);
+    bggUserList.append(row);
+  }
+}
+
 function updateTaxonomyLogicButton() {
   const mode = requireAllTaxonomy ? 'AND' : 'OR';
   const label = `Match ${requireAllTaxonomy ? 'all' : 'any'} categories and mechanics (${mode})`;
@@ -291,13 +398,48 @@ function renderGames() {
     if (!selectedTaxonomy.size) return true;
     const matches = gameTaxonomy(game).filter(value => selectedTaxonomy.has(value)).length;
     return requireAllTaxonomy ? matches === selectedTaxonomy.size : matches > 0;
-  });
+  }).sort((a, b) => gameSort.value === 'alphabetical'
+    ? alphabeticalCompare(a, b)
+    : compareByNumericValue(a, b, game => getSortValue(game, gameSort.value), gameSort.value.endsWith('descending') || ['rating', 'complexity'].includes(gameSort.value) ? -1 : 1));
   if (!filteredGames.length) {
-    gameGrid.innerHTML = `<p class="message">${games.length ? 'No games match the selected filters.' : 'No owned games found in this collection.'}</p>`;
+    const message = games.length
+      ? 'No games match the selected filters.'
+      : selectedBGGUsers.size
+        ? 'No owned games found in the selected BGG collections.'
+        : 'Select a BGG user to show owned games.';
+    gameGrid.innerHTML = `<p class="message">${message}</p>`;
     return;
   }
   gameGrid.replaceChildren();
+  let currentGroup = null;
   for (const game of filteredGames) {
+    if (gameSort.value !== 'alphabetical') {
+      const group = getSortGroup(getSortValue(game, gameSort.value), gameSort.value);
+      if (group.key !== currentGroup) {
+        const heading = document.createElement('h2');
+        heading.className = 'game-group-heading';
+        const label = document.createElement('span');
+        label.textContent = group.label;
+        const navigation = document.createElement('span');
+        navigation.className = 'game-group-navigation';
+        for (const [direction, symbol, labelText] of [
+          ['previous', '⇈', 'Jump up to the previous group'],
+          ['next', '⇊', 'Jump down to the next group']
+        ]) {
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.className = 'game-group-jump';
+          button.dataset.groupJump = direction;
+          button.setAttribute('aria-label', labelText);
+          button.title = labelText;
+          button.textContent = symbol;
+          navigation.append(button);
+        }
+        heading.append(label, navigation);
+        gameGrid.append(heading);
+        currentGroup = group.key;
+      }
+    }
     const card = document.createElement('article');
     card.className = 'game';
     const playerRange = range(game.minPlayers, game.maxPlayers);
@@ -310,6 +452,25 @@ function renderGames() {
     gameGrid.append(card);
   }
 }
+
+gameGrid.addEventListener('click', event => {
+  const button = event.target.closest('button[data-group-jump]');
+  if (!button) return;
+  const headings = [...gameGrid.querySelectorAll('.game-group-heading')];
+  const currentIndex = headings.indexOf(button.closest('.game-group-heading'));
+  if (button.dataset.groupJump === 'previous' && currentIndex === 0) {
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    return;
+  }
+  if (button.dataset.groupJump === 'next' && currentIndex === headings.length - 1) {
+    window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'smooth' });
+    return;
+  }
+  const offset = button.dataset.groupJump === 'next' ? 1 : -1;
+  headings[currentIndex + offset]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+});
+
+gameSort.addEventListener('change', renderGames);
 
 function updateRangeValues() {
   document.querySelector('#player-value').textContent = playerValue === 0 ? 'Any' : String(playerValue);
@@ -371,6 +532,88 @@ taxonomyLogicButton.addEventListener('click', () => {
 });
 updateTaxonomyLogicButton();
 
+async function updateBGGUsers(path, method, payload) {
+  const response = await fetch(path, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+  return result;
+}
+
+bggUserList.addEventListener('click', async event => {
+  const deleteButton = event.target.closest('button[data-delete-username]');
+  if (deleteButton) {
+    const username = deleteButton.dataset.deleteUsername;
+    deleteButton.disabled = true;
+    try {
+      const result = await updateBGGUsers('/api/bgg-users', 'DELETE', { username });
+      bggUsers = result.users;
+      selectedBGGUsers.delete(username);
+      renderBggUsers();
+      bggUserStatus.textContent = `Deleted ${username}.`;
+      await loadGames();
+    } catch (error) {
+      console.error(error);
+      bggUserStatus.textContent = `Could not delete ${username}: ${error.message}`;
+      deleteButton.disabled = false;
+    }
+    return;
+  }
+  const selectButton = event.target.closest('button[data-username]');
+  if (!selectButton) return;
+  const username = selectButton.dataset.username;
+  if (selectedBGGUsers.has(username)) selectedBGGUsers.delete(username);
+  else selectedBGGUsers.add(username);
+  renderBggUsers();
+  bggUserStatus.textContent = '';
+  await loadGames();
+});
+
+document.querySelector('#bgg-user-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const input = document.querySelector('#bgg-user-input');
+  const submitButton = event.currentTarget.querySelector('button[type="submit"]');
+  const username = input.value.trim();
+  if (!username) return;
+  submitButton.disabled = true;
+  try {
+    const isNewUser = !bggUsers.some(user => user.toLocaleLowerCase() === username.toLocaleLowerCase());
+    const result = await updateBGGUsers('/api/bgg-users', 'POST', { username });
+    bggUsers = result.users;
+    const addedUsername = bggUsers.find(user => user.toLocaleLowerCase() === username.toLocaleLowerCase());
+    selectedBGGUsers.add(addedUsername);
+    input.value = '';
+    renderBggUsers();
+    bggUserStatus.textContent = `Added ${addedUsername} and selected their collection.`;
+    await loadGames(false, isNewUser ? [addedUsername] : []);
+  } catch (error) {
+    console.error(error);
+    bggUserStatus.textContent = `Could not add ${username}: ${error.message}`;
+  } finally {
+    submitButton.disabled = false;
+  }
+});
+
+document.querySelector('#save-bgg-default').addEventListener('click', async event => {
+  const button = event.currentTarget;
+  button.disabled = true;
+  try {
+    const result = await updateBGGUsers('/api/bgg-users/default', 'POST', {
+      selectedUsers: [...selectedBGGUsers]
+    });
+    bggUsers = result.users;
+    bggUserStatus.textContent = 'Default selection saved.';
+  } catch (error) {
+    console.error(error);
+    bggUserStatus.textContent = `Could not save default selection: ${error.message}`;
+  } finally {
+    button.disabled = false;
+  }
+});
+
 document.querySelector('.app-layout').addEventListener('click', event => {
   const option = event.target.closest('button[data-filter-value]');
   if (!option) return;
@@ -385,20 +628,46 @@ document.querySelector('.app-layout').addEventListener('click', event => {
   renderGames();
 });
 
-async function load() {
+async function loadGames(resetTime = false, refreshUsers = []) {
+  const requestSequence = ++gamesLoadSequence;
+  gameGrid.innerHTML = '<p class="message">Loading selected collections…</p>';
   try {
-    const response = await fetch('/api/games');
+    const users = encodeURIComponent(JSON.stringify([...selectedBGGUsers]));
+    const refresh = encodeURIComponent(JSON.stringify(refreshUsers));
+    const response = await fetch(`/api/games?users=${users}&refreshUsers=${refresh}`);
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+    if (requestSequence !== gamesLoadSequence) return;
     games = result.games;
+    const previousTimeCeiling = timeCeiling;
     timeCeiling = Math.max(5, Math.ceil(Math.max(0, ...games.map(game => Number(game.maxTime) || Number(game.time) || 0)) / 5) * 5);
     const timeSlider = document.querySelector('#time-value-input');
     timeSlider.max = String(timeCeiling);
-    timeValue = timeMode === 'maximum' ? timeCeiling : 0;
+    const timeWasNeutral = timeValue === 0 || (timeMode === 'maximum' && timeValue >= previousTimeCeiling);
+    if (resetTime || timeWasNeutral) timeValue = timeMode === 'maximum' ? timeCeiling : 0;
+    else timeValue = Math.min(timeValue, timeCeiling);
     timeSlider.value = String(timeValue);
     updateRangeValues();
     renderFilters();
     renderGames();
-  } catch (error) { gameGrid.innerHTML = `<p class="message">Could not load collection.\n${escapeHTML(error.message)}</p>`; }
+  } catch (error) {
+    if (requestSequence !== gamesLoadSequence) return;
+    gameGrid.innerHTML = `<p class="message">Could not load collection.\n${escapeHTML(error.message)}</p>`;
+  }
 }
-load();
+
+async function initialize() {
+  try {
+    const response = await fetch('/api/bgg-users');
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+    bggUsers = result.users;
+    selectedBGGUsers = new Set(result.defaultSelection);
+    renderBggUsers();
+    await loadGames(true, [...selectedBGGUsers]);
+  } catch (error) {
+    console.error(error);
+    gameGrid.innerHTML = `<p class="message">Could not load BGG users.\n${escapeHTML(error.message)}</p>`;
+  }
+}
+initialize();

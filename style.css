@@ -17,8 +17,8 @@ body {
 
 .app-layout {
     display: grid;
-    grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
-    grid-template-areas: "categories games";
+    grid-template-columns: var(--sidebar-width) minmax(0, 1fr) var(--sidebar-width);
+    grid-template-areas: "categories games bgg-users";
     gap: 0;
     width: 100%;
     align-items: stretch;
@@ -26,10 +26,19 @@ body {
 }
 
 .app-layout.filter-collapsed {
-    grid-template-columns: 0 minmax(0, 1fr)
+    grid-template-columns: 0 minmax(0, 1fr) var(--sidebar-width)
 }
 
-.app-layout:not(.filter-collapsed) {
+.app-layout.users-collapsed {
+    grid-template-columns: var(--sidebar-width) minmax(0, 1fr) 0
+}
+
+.app-layout.filter-collapsed.users-collapsed {
+    grid-template-columns: 0 minmax(0, 1fr) 0
+}
+
+.app-layout:not(.filter-collapsed),
+.app-layout:not(.users-collapsed) {
     column-gap: 20px
 }
 
@@ -59,8 +68,36 @@ body {
     left: var(--sidebar-width)
 }
 
+.bgg-users-panel-toggle {
+    position: fixed;
+    z-index: 5;
+    top: 50%;
+    right: 0;
+    transform: translateY(-50%);
+    display: grid;
+    place-items: center;
+    width: 34px;
+    height: 54px;
+    padding: 0;
+    border: 1px solid #373c48;
+    border-right: 0;
+    border-radius: 10px 0 0 10px;
+    background: #1b1e25;
+    color: #d0d4dd;
+    font: 700 1.4rem/1 ui-sans-serif, system-ui, sans-serif;
+    cursor: pointer;
+    box-shadow: 0 4px 16px #0006;
+    transition: right .28s ease, background-color .15s, color .15s
+}
+
+.bgg-users-panel-toggle.is-open {
+    right: var(--sidebar-width)
+}
+
 .filter-panel-toggle:hover,
-.filter-panel-toggle:focus-visible {
+.filter-panel-toggle:focus-visible,
+.bgg-users-panel-toggle:hover,
+.bgg-users-panel-toggle:focus-visible {
     background: #303746;
     color: #fff;
     outline: 2px solid #9cb9ff;
@@ -114,13 +151,22 @@ body {
     transition: opacity .2s ease
 }
 
-.filter-collapsed .filter-panel {
+.filter-collapsed .category-filter {
     visibility: hidden;
     opacity: 0;
     pointer-events: none;
     padding-right: 0;
     padding-left: 0;
     border-right-width: 0
+}
+
+.users-collapsed .bgg-users-panel {
+    visibility: hidden;
+    opacity: 0;
+    pointer-events: none;
+    padding-right: 0;
+    padding-left: 0;
+    border-left-width: 0
 }
 
 .filter-panel::-webkit-scrollbar {
@@ -283,6 +329,85 @@ body {
     grid-area: categories
 }
 
+.bgg-users-panel {
+    grid-area: bgg-users;
+    border-right: 0;
+    border-left: 1px solid #292d36;
+    display: flex;
+    flex-direction: column
+}
+
+.bgg-user-form {
+    margin-top: 18px;
+    margin-bottom: 14px
+}
+
+.bgg-user-list {
+    display: grid;
+    gap: 5px
+}
+
+.bgg-user-option {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    min-width: 0
+}
+
+.bgg-user-select {
+    flex: 1;
+    min-width: 0;
+    padding: 7px 8px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: #a7abb6;
+    font: inherit;
+    font-size: .9rem;
+    text-align: left;
+    overflow-wrap: anywhere;
+    cursor: pointer
+}
+
+.bgg-user-select:hover,
+.bgg-user-select.is-selected {
+    background: #272c35;
+    color: #f3f3f5
+}
+
+.bgg-user-delete {
+    flex: 0 0 auto;
+    width: 30px;
+    height: 30px;
+    border: 1px solid #373c48;
+    border-radius: 6px;
+    background: #1b1e25;
+    color: #a7abb6;
+    font: inherit;
+    cursor: pointer
+}
+
+.bgg-user-delete:hover,
+.bgg-user-delete:focus-visible {
+    border-color: #ef8585;
+    color: #fff
+}
+
+.bgg-user-status {
+    min-height: 1.4em;
+    margin: 10px 0;
+    color: #a7abb6;
+    font-size: .78rem;
+    overflow-wrap: anywhere
+}
+
+.bgg-default-save {
+    width: 100%;
+    margin-top: auto;
+    font-size: .82rem;
+    line-height: 1.35
+}
+
 .filter-title {
     margin: 0;
     font-size: .9rem;
@@ -294,6 +419,47 @@ body {
     grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
     gap: 30px 20px;
     align-items: stretch
+}
+
+.game-group-heading {
+    display: flex;
+    grid-column: 1 / -1;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin: 4px 0 -12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid #292d36;
+    color: #d0d4dd;
+    font-size: .9rem;
+    font-weight: 650
+}
+
+.game-group-navigation {
+    display: flex;
+    gap: 6px;
+    margin-left: auto
+}
+
+.game-group-jump {
+    display: grid;
+    place-items: center;
+    width: 30px;
+    height: 28px;
+    padding: 0;
+    border: 1px solid #373c48;
+    border-radius: 6px;
+    background: #1b1e25;
+    color: #a7abb6;
+    font: 700 1rem/1 ui-sans-serif, system-ui, sans-serif;
+    cursor: pointer
+}
+
+.game-group-jump:hover,
+.game-group-jump:focus-visible {
+    border-color: #9cb9ff;
+    color: #fff;
+    outline: none
 }
 
 .filter-list {
@@ -334,6 +500,36 @@ body {
     padding: clamp(18px, 4vw, 54px);
     min-width: 0;
     padding-top: 8px
+}
+
+.library-toolbar {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 20px
+}
+
+.sort-control {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #a7abb6;
+    font-size: .82rem
+}
+
+.sort-control select {
+    max-width: min(100%, 260px);
+    padding: 8px 10px;
+    border: 1px solid #373c48;
+    border-radius: 7px;
+    background: #1b1e25;
+    color: #d0d4dd;
+    font: inherit;
+    cursor: pointer
+}
+
+.sort-control select:focus-visible {
+    outline: 2px solid #9cb9ff;
+    outline-offset: 2px
 }
 
 .game {
@@ -732,8 +928,18 @@ dialog::backdrop {
         grid-template-areas: "games"
     }
 
-    .app-layout:not(.filter-collapsed) {
+    .app-layout:not(.filter-collapsed),
+    .app-layout:not(.users-collapsed) {
         column-gap: 0
+    }
+
+    .app-layout,
+    .app-layout.filter-collapsed,
+    .app-layout.users-collapsed,
+    .app-layout.filter-collapsed.users-collapsed {
+        grid-template-columns: minmax(0, 1fr);
+        grid-template-areas: "games";
+        gap: 0
     }
 
     .filter-panel {
@@ -748,7 +954,27 @@ dialog::backdrop {
         box-shadow: 12px 0 30px #0008
     }
 
-    .app-layout:not(.filter-collapsed) .filter-panel {
+    .app-layout:not(.filter-collapsed) .category-filter {
+        visibility: visible;
+        opacity: 1;
+        pointer-events: auto;
+        transform: translateX(0)
+    }
+
+    .bgg-users-panel {
+        position: fixed;
+        z-index: 4;
+        top: 0;
+        left: auto;
+        right: 0;
+        width: min(82vw, 290px);
+        height: 100vh;
+        transform: translateX(100%);
+        transition: transform .28s ease;
+        box-shadow: -12px 0 30px #0008
+    }
+
+    .app-layout:not(.users-collapsed) .bgg-users-panel {
         visibility: visible;
         opacity: 1;
         pointer-events: auto;
@@ -757,6 +983,10 @@ dialog::backdrop {
 
     .filter-panel-toggle.is-open {
         left: min(82vw, 290px)
+    }
+
+    .bgg-users-panel-toggle.is-open {
+        right: min(82vw, 290px)
     }
 
     .library {
@@ -792,7 +1022,15 @@ dialog::backdrop {
     }
 
     .app-layout.filter-collapsed {
-        grid-template-columns: 0 minmax(0, 1fr)
+        grid-template-columns: 0 minmax(0, 1fr) var(--sidebar-width)
+    }
+
+    .app-layout.users-collapsed {
+        grid-template-columns: var(--sidebar-width) minmax(0, 1fr) 0
+    }
+
+    .app-layout.filter-collapsed.users-collapsed {
+        grid-template-columns: 0 minmax(0, 1fr) 0
     }
 
     .game-grid {
