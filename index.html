@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101216">
+  <title>Board Game Library</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <button id="filter-panel-toggle" class="filter-panel-toggle" type="button" aria-controls="category-filter-panel" aria-expanded="false" aria-label="Show category and mechanic filters" title="Show filters">»</button>
+  <div class="app-layout filter-collapsed">
+    <aside id="category-filter-panel" class="filter-panel category-filter" aria-labelledby="category-filter-title" aria-hidden="true">
+      <div class="filter-panel-header">
+        <h2 id="category-filter-title" class="filter-title">Categories &amp; Mechanics</h2>
+        <button id="taxonomy-logic" class="filter-logic filter-taxonomy-logic" type="button" aria-label="Match any categories and mechanics (OR)" title="Match any categories and mechanics (OR)" aria-pressed="false">OR</button>
+      </div>
+      <section class="filter-section" aria-labelledby="language-filter-title">
+        <div id="language-filters" class="language-filters"></div>
+      </section>
+      <section class="filter-section" aria-labelledby="player-filter-title">
+        <div class="filter-section-header">
+          <h3 id="player-filter-title" class="filter-section-title">Players</h3>
+          <button id="player-mode" class="filter-mode" type="button" aria-label="Player filter mode: At least" title="Switch player filter mode">At least</button>
+        </div>
+        <div class="range-values"><span id="player-value">Any</span></div>
+        <input id="player-value-input" class="single-range" type="range" min="0" max="10" value="0" step="1" aria-label="Player count filter">
+      </section>
+      <section class="filter-section" aria-labelledby="time-filter-title">
+        <div class="filter-section-header">
+          <h3 id="time-filter-title" class="filter-section-title">Play time</h3>
+          <button id="time-mode" class="filter-mode" type="button" aria-label="Play time filter mode: Maximum" title="Switch play time filter mode">Maximum</button>
+        </div>
+        <div class="range-values"><span id="time-value">Any</span><span class="range-unit">minutes</span></div>
+        <input id="time-value-input" class="single-range" type="range" min="0" max="0" value="0" step="5" aria-label="Play time filter in minutes">
+      </section>
+      <div id="category-filters" class="filter-list"></div>
+    </aside>
+    <main id="library" class="library" aria-label="Board game collection" aria-live="polite">
+      <div id="game-grid" class="game-grid">
+        <p class="message">Loading your games…</p>
+      </div>
+    </main>
+  </div>
+  <dialog id="details" aria-labelledby="detail-title">
+    <button id="close" class="close" aria-label="Close game details">×</button>
+    <div id="detail-content"></div>
+  </dialog>
+</body>
+</html>
