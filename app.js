@@ -1,5 +1,6 @@
 const gameGrid = document.querySelector('#game-grid');
 const gameSort = document.querySelector('#game-sort');
+const gameSearch = document.querySelector('#game-search');
 const categoryFilters = document.querySelector('#category-filters');
 const dialog = document.querySelector('#details');
 const content = document.querySelector('#detail-content');
@@ -381,7 +382,9 @@ function updateTaxonomyLogicButton() {
 }
 
 function renderGames() {
+  const searchTerm = gameSearch.value.trim().toLocaleLowerCase();
   const filteredGames = games.filter(game => {
+    if (searchTerm && ![game.name, game.originalName].some(name => String(name || '').toLocaleLowerCase().includes(searchTerm))) return false;
     if (selectedLanguages.size && !(game.languages || []).some(language => selectedLanguages.has(language))) return false;
     if (playerValue > 0) {
       const supportedMin = Number(game.minPlayers);
@@ -411,6 +414,13 @@ function renderGames() {
     return;
   }
   gameGrid.replaceChildren();
+  const groupCounts = new Map();
+  if (gameSort.value !== 'alphabetical') {
+    for (const game of filteredGames) {
+      const group = getSortGroup(getSortValue(game, gameSort.value), gameSort.value);
+      groupCounts.set(group.key, (groupCounts.get(group.key) || 0) + 1);
+    }
+  }
   let currentGroup = null;
   for (const game of filteredGames) {
     if (gameSort.value !== 'alphabetical') {
@@ -419,7 +429,7 @@ function renderGames() {
         const heading = document.createElement('h2');
         heading.className = 'game-group-heading';
         const label = document.createElement('span');
-        label.textContent = group.label;
+        label.textContent = `${group.label} (${groupCounts.get(group.key)})`;
         const navigation = document.createElement('span');
         navigation.className = 'game-group-navigation';
         for (const [direction, symbol, labelText] of [
@@ -471,6 +481,7 @@ gameGrid.addEventListener('click', event => {
 });
 
 gameSort.addEventListener('change', renderGames);
+gameSearch.addEventListener('input', renderGames);
 
 function updateRangeValues() {
   document.querySelector('#player-value').textContent = playerValue === 0 ? 'Any' : String(playerValue);
