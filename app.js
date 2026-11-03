@@ -234,7 +234,7 @@ async function saveCustomCategories(game, customCategories, input, button) {
 function openGame(game) {
   const selectedLanguages = Array.isArray(game.languages) ? game.languages : [];
   content.innerHTML = `<div class="detail-layout">
-    <div>${img(game.image || game.thumbnail, game.name, 'detail-cover')}</div>
+    <div>${img(game.image, game.name, 'detail-cover')}</div>
     <div><h2 class="detail-title" id="detail-title">${escapeHTML(game.name)}</h2>
       <p class="year">${game.year ? escapeHTML(game.year) : 'Board game'}</p>
       <div class="facts">${fact('Players',range(game.minPlayers,game.maxPlayers))}${fact('Playtime',minutes(game))}${fact('BGG average',game.rating ? `${Number(game.rating).toFixed(1)} / 10` : 'Not rated')}${fact('Complexity',game.weight ? `${Number(game.weight).toFixed(2)} / 5` : 'Not rated')}${fact('Minimum age',game.minAge ? `${game.minAge}+` : 'Unknown')}</div>
@@ -447,7 +447,7 @@ function renderGames() {
     const taxonomyOptions = gameTaxonomy(game).slice(0, 4).map((value, index) =>
       `${index ? '<span class="card-taxonomy-separator" aria-hidden="true">·</span>' : ''}<button class="card-taxonomy-option${selectedTaxonomy.has(value) ? ' is-selected' : ''}" type="button" data-filter-value="${escapeHTML(value)}" aria-pressed="${selectedTaxonomy.has(value)}">${escapeHTML(value)}</button>`
     ).join('');
-    card.innerHTML = `<button class="game-main" type="button" aria-label="View details for ${escapeHTML(game.name)}">${img(game.image || game.thumbnail, game.name, 'cover')}<div class="name">${escapeHTML(game.name)}</div><div class="meta"><span class="meta-item" aria-label="${escapeHTML(playerRange)} players"><svg class="meta-icon" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="4.5" r="2.5"></circle><path d="M3 14v-1.5a5 5 0 0 1 10 0V14z"></path></svg><span>${escapeHTML(playerRange)}</span></span><span class="meta-item" aria-label="${escapeHTML(minutes(game))}"><svg class="meta-icon" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.25"></circle><path d="M8 4v4l2.5 1.5"></path></svg><span>${escapeHTML(playtime)}</span></span><div class="game-languages" aria-label="Supported languages">${languageFlags(game.languages || [])}</div></div></button><div class="card-taxonomy" aria-label="Categories and mechanics">${taxonomyOptions}</div>`;
+    card.innerHTML = `<button class="game-main" type="button" aria-label="View details for ${escapeHTML(game.name)}">${img(game.image, game.name, 'cover')}<div class="name">${escapeHTML(game.name)}</div><div class="meta"><span class="meta-item" aria-label="${escapeHTML(playerRange)} players"><svg class="meta-icon" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="4.5" r="2.5"></circle><path d="M3 14v-1.5a5 5 0 0 1 10 0V14z"></path></svg><span>${escapeHTML(playerRange)}</span></span><span class="meta-item" aria-label="${escapeHTML(minutes(game))}"><svg class="meta-icon" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.25"></circle><path d="M8 4v4l2.5 1.5"></path></svg><span>${escapeHTML(playtime)}</span></span><div class="game-languages" aria-label="Supported languages">${languageFlags(game.languages || [])}</div></div></button><div class="card-taxonomy" aria-label="Categories and mechanics">${taxonomyOptions}</div>`;
     card.querySelector('.game-main').addEventListener('click', () => openGame(game));
     gameGrid.append(card);
   }

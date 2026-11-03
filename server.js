@@ -28,6 +28,9 @@ const CUSTOM_NAMES_FILE = path.join(ROOT, 'custom-names.json');
 const CUSTOM_CATEGORIES_FILE = path.join(ROOT, 'custom-categories.json');
 const CUSTOM_LANGUAGES_FILE = path.join(ROOT, 'custom-languages.json');
 const BGG_USERS_FILE = path.join(ROOT, 'bgg-users.json');
+const GAME_CACHE_FILE = path.join(ROOT, 'games-cache.json');
+const LEGACY_GAME_CACHE_DIR = path.join(ROOT, 'game-cache');
+const GAME_IMAGES_DIR = path.join(ROOT, 'game-images');
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 async function readCustomNames() {
@@ -115,6 +118,111 @@ function text(xml, name) { return decode(new RegExp(`<${name}\\b[^>]*>([\\s\\S]*
 function value(xml, name) { return attr(first(xml, name), 'value'); }
 function links(xml, type) { return elements(xml, 'link').filter(tag => attr(tag,'type') === type).map(tag => attr(tag,'value')); }
 
+let gameCache;
+let gameCacheLoad;
+let gameCacheWrite = Promise.resolve();
+
+function withoutThumbnail(game) {
+  const cachedGame = { ...game };
+  delete cachedGame.thumbnail;
+  return cachedGame;
+}
+
+async function removeCachedThumbnails() {
+  try {
+    const entries = await fs.readdir(GAME_IMAGES_DIR, { withFileTypes: true });
+    await Promise.all(entries
+      .filter(entry => entry.isFile() && /^\d+-thumbnail\.(?:jpe?g|png|gif|webp)$/i.test(entry.name))
+      .map(entry => fs.unlink(path.join(GAME_IMAGES_DIR, entry.name))));
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
+}
+
+async function loadGameCache() {
+  await removeCachedThumbnails();
+  try {
+    const parsed = JSON.parse(await fs.readFile(GAME_CACHE_FILE, 'utf8'));
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('The games cache file has an invalid format.');
+    }
+    const entries = Object.entries(parsed);
+    const cachedGames = new Map(entries.map(([id, game]) => {
+      if (!/^\d+$/.test(id) || !game || typeof game !== 'object' || Array.isArray(game) || game.id !== id) {
+        throw new Error(`The cached data for game ${id} has an invalid format.`);
+      }
+      return [id, withoutThumbnail(game)];
+    }));
+    if (entries.some(([, game]) => Object.hasOwn(game, 'thumbnail'))) await writeGameCache(cachedGames);
+    return cachedGames;
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
+
+  const migratedGames = new Map();
+  try {
+    const entries = await fs.readdir(LEGACY_GAME_CACHE_DIR, { withFileTypes: true });
+    for (const entry of entries) {
+      const match = /^(\d+)\.json$/.exec(entry.name);
+      if (!entry.isFile() || !match) continue;
+      const game = JSON.parse(await fs.readFile(path.join(LEGACY_GAME_CACHE_DIR, entry.name), 'utf8'));
+      if (!game || typeof game !== 'object' || Array.isArray(game) || game.id !== match[1]) {
+        throw new Error(`The cached data for game ${match[1]} has an invalid format.`);
+      }
+      migratedGames.set(match[1], withoutThumbnail(game));
+    }
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
+  gameCache = migratedGames;
+  if (migratedGames.size) await writeGameCache(migratedGames);
+  return migratedGames;
+}
+
+async function getGameCache() {
+  if (!gameCacheLoad) {
+    gameCacheLoad = loadGameCache().then(cache => {
+      gameCache = cache;
+      return cache;
+    });
+  }
+  return gameCacheLoad;
+}
+
+async function writeGameCache(cache = gameCache) {
+  const contents = JSON.stringify(Object.fromEntries(cache), null, 2);
+  const write = gameCacheWrite.then(async () => {
+    await fs.writeFile(GAME_CACHE_FILE, contents, 'utf8');
+  });
+  gameCacheWrite = write.catch(() => {});
+  return write;
+}
+
+function imageExtension(response, imageUrl) {
+  const contentType = response.headers.get('content-type')?.split(';')[0].trim().toLocaleLowerCase();
+  const extensions = {
+    'image/jpeg': 'jpg',
+    'image/png': 'png',
+    'image/gif': 'gif',
+    'image/webp': 'webp'
+  };
+  if (extensions[contentType]) return extensions[contentType];
+  const extension = path.extname(new URL(imageUrl).pathname).slice(1).toLocaleLowerCase();
+  if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(extension)) return extension;
+  throw new Error(`BoardGameGeek returned an unsupported image type for ${imageUrl}.`);
+}
+
+async function cacheGameImage(id, imageUrl) {
+  if (!imageUrl) return '';
+  const response = await fetch(imageUrl, { signal: AbortSignal.timeout(30000) });
+  if (!response.ok) throw new Error(`Could not download the image for game ${id} (HTTP ${response.status}).`);
+  const extension = imageExtension(response, imageUrl);
+  const filename = `${id}.${extension}`;
+  await fs.mkdir(GAME_IMAGES_DIR, { recursive: true });
+  await fs.writeFile(path.join(GAME_IMAGES_DIR, filename), Buffer.from(await response.arrayBuffer()));
+  return `/game-images/${filename}`;
+}
+
 async function request(endpoint) {
   for (let attempt = 0; attempt < 9; attempt++) {
     console.log(`[BGG API] GET ${BASE}${endpoint} (attempt ${attempt + 1}/9)`);
@@ -145,15 +253,21 @@ async function fetchUserGames(username, refresh = false) {
     const collection = await request(`/collection?username=${encodeURIComponent(username)}&own=1&stats=1`);
     const owned = elements(collection, 'item').map(item => ({
       id: attr(item, 'objectid'), name: text(item, 'name'), year: text(item,'yearpublished'),
-      thumbnail: text(item,'thumbnail'), image: text(item,'image'), plays: Number(text(item,'numplays')) || 0,
+      image: text(item,'image'), plays: Number(text(item,'numplays')) || 0,
       minPlayers: value(item,'minplayers'), maxPlayers: value(item,'maxplayers'),
       time: value(item,'playingtime'), minTime: value(item,'minplaytime'), maxTime: value(item,'maxplaytime'),
       rating: attr(first(item,'average'),'value'), weight: attr(first(item,'averageweight'),'value')
     })).filter(game => /^\d+$/.test(game.id));
+    const cachedGames = await getGameCache();
+    const uncachedGames = [];
+    for (const game of owned) {
+      if (!cachedGames.has(game.id)) uncachedGames.push(game);
+    }
     const detailMap = new Map();
-    for (let i = 0; i < owned.length; i += 20) {
+    for (let i = 0; i < uncachedGames.length; i += 20) {
       if (i) await pause(1500);
-      const ids = owned.slice(i, i + 20).map(game => game.id);
+      const batch = uncachedGames.slice(i, i + 20);
+      const ids = batch.map(game => game.id);
       const xml = await request(`/thing?id=${ids.join(',')}&stats=1`);
       for (const item of elements(xml, 'item')) {
         const names = elements(item, 'name');
@@ -161,7 +275,7 @@ async function fetchUserGames(username, refresh = false) {
         const ratings = first(first(item, 'statistics'), 'ratings');
         detailMap.set(attr(item, 'id'), {
           name: attr(primary, 'value'), year: value(item, 'yearpublished'),
-          image: text(item, 'image'), thumbnail: text(item, 'thumbnail'),
+          image: text(item, 'image'),
           minPlayers: value(item, 'minplayers'), maxPlayers: value(item, 'maxplayers'),
           time: value(item, 'playingtime'), minTime: value(item, 'minplaytime'), maxTime: value(item, 'maxplaytime'),
           minAge: value(item, 'minage'), rating: value(ratings, 'average'), weight: value(ratings, 'averageweight'),
@@ -169,19 +283,37 @@ async function fetchUserGames(username, refresh = false) {
           categories: links(item, 'boardgamecategory'), mechanics: links(item, 'boardgamemechanic'), designers: links(item, 'boardgamedesigner')
         });
       }
+      for (const game of batch) {
+        const details = detailMap.get(game.id) || {};
+        const imageUrl = details.image || game.image;
+        const image = await cacheGameImage(game.id, imageUrl);
+        const cachedGame = {
+          ...game,
+          ...Object.fromEntries(Object.entries(details).filter(([, detail]) => detail !== '' && detail != null)),
+          image,
+          apiCategories: details.categories || [],
+          mechanics: details.mechanics || [],
+          designers: details.designers || [],
+          description: details.description || '',
+          minAge: details.minAge || ''
+        };
+        cachedGames.set(game.id, cachedGame);
+      }
     }
     const games = owned.map(game => {
-      const details = detailMap.get(game.id) || {};
-      return {
-        ...game,
-        ...Object.fromEntries(Object.entries(details).filter(([, value]) => value !== '' && value != null)),
-        apiCategories: details.categories || [],
-        mechanics: details.mechanics || [],
-        designers: details.designers || [],
-        description: details.description || '',
-        minAge: details.minAge || ''
-      };
+      const cachedGame = cachedGames.get(game.id);
+      const updatedGame = { ...game, ...cachedGame, plays: game.plays };
+      updatedGame.image = cachedGame.image || '';
+      delete updatedGame.thumbnail;
+      updatedGame.apiCategories = cachedGame.apiCategories || [];
+      updatedGame.mechanics = cachedGame.mechanics || [];
+      updatedGame.designers = cachedGame.designers || [];
+      updatedGame.description = cachedGame.description || '';
+      updatedGame.minAge = cachedGame.minAge || '';
+      cachedGames.set(game.id, updatedGame);
+      return updatedGame;
     });
+    await writeGameCache(cachedGames);
     userGameCache.set(cacheKey, games);
     return games;
   })();
@@ -230,6 +362,7 @@ async function fetchGames(usernames, refreshUsernames = []) {
 }
 
 const types = {'.html':'text/html; charset=utf-8','.css':'text/css; charset=utf-8','.js':'text/javascript; charset=utf-8'};
+const imageTypes = {'.jpg':'image/jpeg','.jpeg':'image/jpeg','.png':'image/png','.gif':'image/gif','.webp':'image/webp'};
 http.createServer(async (req,res) => {
   const send = (status, body, type='application/json; charset=utf-8') => { res.writeHead(status, {'Content-Type':type,'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}); res.end(body); };
   try {
@@ -359,6 +492,11 @@ http.createServer(async (req,res) => {
       return send(200, JSON.stringify({ ok: true, gameId, languages }));
     }
     if (req.method !== 'GET') return send(405,JSON.stringify({error:'Method not allowed'}));
+    const imageMatch = /^\/game-images\/(\d+\.(?:jpe?g|png|gif|webp))$/.exec(pathname);
+    if (imageMatch) {
+      const imagePath = path.join(GAME_IMAGES_DIR, imageMatch[1]);
+      return send(200, await fs.readFile(imagePath), imageTypes[path.extname(imagePath)]);
+    }
     if (pathname === '/api/games') {
       const url = new URL(req.url, 'http://localhost');
       let usernames;
