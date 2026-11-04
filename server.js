@@ -122,39 +122,18 @@ let gameCache;
 let gameCacheLoad;
 let gameCacheWrite = Promise.resolve();
 
-function withoutThumbnail(game) {
-  const cachedGame = { ...game };
-  delete cachedGame.thumbnail;
-  return cachedGame;
-}
-
-async function removeCachedThumbnails() {
-  try {
-    const entries = await fs.readdir(GAME_IMAGES_DIR, { withFileTypes: true });
-    await Promise.all(entries
-      .filter(entry => entry.isFile() && /^\d+-thumbnail\.(?:jpe?g|png|gif|webp)$/i.test(entry.name))
-      .map(entry => fs.unlink(path.join(GAME_IMAGES_DIR, entry.name))));
-  } catch (error) {
-    if (error.code !== 'ENOENT') throw error;
-  }
-}
-
 async function loadGameCache() {
-  await removeCachedThumbnails();
   try {
     const parsed = JSON.parse(await fs.readFile(GAME_CACHE_FILE, 'utf8'));
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
       throw new Error('The games cache file has an invalid format.');
     }
-    const entries = Object.entries(parsed);
-    const cachedGames = new Map(entries.map(([id, game]) => {
+    return new Map(Object.entries(parsed).map(([id, game]) => {
       if (!/^\d+$/.test(id) || !game || typeof game !== 'object' || Array.isArray(game) || game.id !== id) {
         throw new Error(`The cached data for game ${id} has an invalid format.`);
       }
-      return [id, withoutThumbnail(game)];
+      return [id, game];
     }));
-    if (entries.some(([, game]) => Object.hasOwn(game, 'thumbnail'))) await writeGameCache(cachedGames);
-    return cachedGames;
   } catch (error) {
     if (error.code !== 'ENOENT') throw error;
   }
@@ -169,7 +148,7 @@ async function loadGameCache() {
       if (!game || typeof game !== 'object' || Array.isArray(game) || game.id !== match[1]) {
         throw new Error(`The cached data for game ${match[1]} has an invalid format.`);
       }
-      migratedGames.set(match[1], withoutThumbnail(game));
+      migratedGames.set(match[1], game);
     }
   } catch (error) {
     if (error.code !== 'ENOENT') throw error;
@@ -212,15 +191,27 @@ function imageExtension(response, imageUrl) {
   throw new Error(`BoardGameGeek returned an unsupported image type for ${imageUrl}.`);
 }
 
-async function cacheGameImage(id, imageUrl) {
+async function cacheGameImage(id, imageUrl, suffix = '') {
   if (!imageUrl) return '';
   const response = await fetch(imageUrl, { signal: AbortSignal.timeout(30000) });
   if (!response.ok) throw new Error(`Could not download the image for game ${id} (HTTP ${response.status}).`);
   const extension = imageExtension(response, imageUrl);
-  const filename = `${id}.${extension}`;
+  const filename = `${id}${suffix}.${extension}`;
   await fs.mkdir(GAME_IMAGES_DIR, { recursive: true });
   await fs.writeFile(path.join(GAME_IMAGES_DIR, filename), Buffer.from(await response.arrayBuffer()));
   return `/game-images/${filename}`;
+}
+
+async function hasCachedThumbnail(id, thumbnail) {
+  const match = new RegExp(`^/game-images/${id}-thumbnail\\.(?:jpe?g|png|gif|webp)$`).exec(thumbnail || '');
+  if (!match) return false;
+  try {
+    await fs.access(path.join(GAME_IMAGES_DIR, path.basename(thumbnail)));
+    return true;
+  } catch (error) {
+    if (error.code === 'ENOENT') return false;
+    throw error;
+  }
 }
 
 async function request(endpoint) {
@@ -253,7 +244,7 @@ async function fetchUserGames(username, refresh = false) {
     const collection = await request(`/collection?username=${encodeURIComponent(username)}&own=1&stats=1`);
     const owned = elements(collection, 'item').map(item => ({
       id: attr(item, 'objectid'), name: text(item, 'name'), year: text(item,'yearpublished'),
-      image: text(item,'image'), plays: Number(text(item,'numplays')) || 0,
+      image: text(item,'image'), thumbnail: text(item,'thumbnail'), plays: Number(text(item,'numplays')) || 0,
       minPlayers: value(item,'minplayers'), maxPlayers: value(item,'maxplayers'),
       time: value(item,'playingtime'), minTime: value(item,'minplaytime'), maxTime: value(item,'maxplaytime'),
       rating: attr(first(item,'average'),'value'), weight: attr(first(item,'averageweight'),'value')
@@ -275,7 +266,7 @@ async function fetchUserGames(username, refresh = false) {
         const ratings = first(first(item, 'statistics'), 'ratings');
         detailMap.set(attr(item, 'id'), {
           name: attr(primary, 'value'), year: value(item, 'yearpublished'),
-          image: text(item, 'image'),
+          image: text(item, 'image'), thumbnail: text(item, 'thumbnail'),
           minPlayers: value(item, 'minplayers'), maxPlayers: value(item, 'maxplayers'),
           time: value(item, 'playingtime'), minTime: value(item, 'minplaytime'), maxTime: value(item, 'maxplaytime'),
           minAge: value(item, 'minage'), rating: value(ratings, 'average'), weight: value(ratings, 'averageweight'),
@@ -286,11 +277,16 @@ async function fetchUserGames(username, refresh = false) {
       for (const game of batch) {
         const details = detailMap.get(game.id) || {};
         const imageUrl = details.image || game.image;
+        const thumbnailUrl = details.thumbnail || game.thumbnail;
         const image = await cacheGameImage(game.id, imageUrl);
+        const thumbnail = thumbnailUrl === imageUrl
+          ? image
+          : await cacheGameImage(game.id, thumbnailUrl, '-thumbnail');
         const cachedGame = {
           ...game,
           ...Object.fromEntries(Object.entries(details).filter(([, detail]) => detail !== '' && detail != null)),
           image,
+          thumbnail,
           apiCategories: details.categories || [],
           mechanics: details.mechanics || [],
           designers: details.designers || [],
@@ -300,11 +296,20 @@ async function fetchUserGames(username, refresh = false) {
         cachedGames.set(game.id, cachedGame);
       }
     }
+    for (const game of owned) {
+      const cachedGame = cachedGames.get(game.id);
+      const hasThumbnail = await hasCachedThumbnail(game.id, cachedGame.thumbnail);
+      if (game.thumbnail && !hasThumbnail) {
+        cachedGame.thumbnail = await cacheGameImage(game.id, game.thumbnail, '-thumbnail');
+      } else if (!hasThumbnail) {
+        cachedGame.thumbnail = '';
+      }
+    }
     const games = owned.map(game => {
       const cachedGame = cachedGames.get(game.id);
       const updatedGame = { ...game, ...cachedGame, plays: game.plays };
       updatedGame.image = cachedGame.image || '';
-      delete updatedGame.thumbnail;
+      updatedGame.thumbnail = cachedGame.thumbnail || '';
       updatedGame.apiCategories = cachedGame.apiCategories || [];
       updatedGame.mechanics = cachedGame.mechanics || [];
       updatedGame.designers = cachedGame.designers || [];
@@ -492,7 +497,7 @@ http.createServer(async (req,res) => {
       return send(200, JSON.stringify({ ok: true, gameId, languages }));
     }
     if (req.method !== 'GET') return send(405,JSON.stringify({error:'Method not allowed'}));
-    const imageMatch = /^\/game-images\/(\d+\.(?:jpe?g|png|gif|webp))$/.exec(pathname);
+    const imageMatch = /^\/game-images\/(\d+(?:-thumbnail)?\.(?:jpe?g|png|gif|webp))$/.exec(pathname);
     if (imageMatch) {
       const imagePath = path.join(GAME_IMAGES_DIR, imageMatch[1]);
       return send(200, await fs.readFile(imagePath), imageTypes[path.extname(imagePath)]);

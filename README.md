@@ -10,4 +10,4 @@ node server.js
 
 The server reads `.env` automatically. Restart it after changing the file.
 
-Game data is cached in `games-cache.json`, keyed by BGG game ID, and full-size cover images are stored by game ID in `game-images/`.
+Game data is cached in `games-cache.json`, keyed by BGG game ID. Full-size covers and thumbnails are stored separately by game ID in `game-images/`
