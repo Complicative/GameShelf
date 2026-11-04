@@ -139,9 +139,70 @@ const languageOptions = [
   { name: 'German', flag: '🇩🇪' }
 ];
 const languageFilters = document.querySelector('#language-filters');
-const img = (url, title, className) => url ? `<img class="${className}" src="${escapeHTML(url)}" alt="${escapeHTML(title)} cover" loading="lazy">` : `<div class="${className}" role="img" aria-label="No cover available"></div>`;
+const img = (url, title, className, generateThumbnailFor = '') => url ? `<img class="${className}" src="${escapeHTML(url)}" alt="${escapeHTML(title)} cover" loading="lazy"${generateThumbnailFor ? ` data-generate-thumbnail="${escapeHTML(generateThumbnailFor)}"` : ''}>` : `<div class="${className}" role="img" aria-label="No cover available"></div>`;
 const tags = arr => arr.map(t => `<span class="tag">${escapeHTML(t)}</span>`).join('');
 const fact = (label, value) => `<div class="fact"><span class="fact-label">${escapeHTML(label)}</span><span class="fact-value">${escapeHTML(value)}</span></div>`;
+
+const pendingGameThumbnails = new Set();
+async function generateGameThumbnail(game) {
+  if (game.thumbnail || pendingGameThumbnails.has(game.id)) return;
+  pendingGameThumbnails.add(game.id);
+  try {
+    const image = gameGrid.querySelector(`img[data-generate-thumbnail="${game.id}"]`);
+    if (!image?.naturalWidth || !image.naturalHeight) return;
+    const canvas = document.createElement('canvas');
+    canvas.width = 360;
+    canvas.height = 480;
+    const scale = Math.max(canvas.width / image.naturalWidth, canvas.height / image.naturalHeight);
+    const sourceWidth = canvas.width / scale;
+    const sourceHeight = canvas.height / scale;
+    const sourceX = (image.naturalWidth - sourceWidth) / 2;
+    const sourceY = (image.naturalHeight - sourceHeight) / 2;
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('Could not create a thumbnail canvas.');
+    context.drawImage(image, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, canvas.width, canvas.height);
+    const thumbnailBlob = await new Promise(resolve => canvas.toBlob(resolve, 'image/webp', 0.78));
+    if (!thumbnailBlob || thumbnailBlob.type !== 'image/webp') throw new Error('This browser could not create a WebP thumbnail.');
+    const response = await fetch(`/api/game-thumbnail/${encodeURIComponent(game.id)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'image/webp' },
+      body: thumbnailBlob
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+    game.thumbnail = result.thumbnail;
+    game.thumbnailSource = 'generated';
+    for (const cardImage of gameGrid.querySelectorAll('img[data-generate-thumbnail]')) {
+      if (cardImage.dataset.generateThumbnail !== game.id) continue;
+      cardImage.removeAttribute('data-generate-thumbnail');
+      cardImage.src = game.thumbnail;
+    }
+  } finally {
+    pendingGameThumbnails.delete(game.id);
+  }
+}
+
+gameGrid.addEventListener('load', event => {
+  const image = event.target;
+  if (!(image instanceof HTMLImageElement) || !image.dataset.generateThumbnail) return;
+  const game = games.find(candidate => candidate.id === image.dataset.generateThumbnail);
+  if (game) generateGameThumbnail(game).catch(error => console.error(error));
+}, true);
+
+gameGrid.addEventListener('error', event => {
+  const image = event.target;
+  if (!(image instanceof HTMLImageElement)) return;
+  const source = image.getAttribute('src');
+  const game = games.find(candidate => candidate.id === image.dataset.generateThumbnail || candidate.thumbnail === source);
+  if (!game?.image) return;
+  if (game.thumbnail && game.thumbnail === source) {
+    game.thumbnail = '';
+    image.dataset.generateThumbnail = game.id;
+    image.src = game.image;
+  } else {
+    image.removeAttribute('data-generate-thumbnail');
+  }
+}, true);
 
 function languageFlags(languages) {
   return languageOptions
@@ -457,7 +518,7 @@ function renderGames() {
     const taxonomyOptions = gameTaxonomy(game).slice(0, 4).map((value, index) =>
       `${index ? '<span class="card-taxonomy-separator" aria-hidden="true">·</span>' : ''}<button class="card-taxonomy-option${selectedTaxonomy.has(value) ? ' is-selected' : ''}" type="button" data-filter-value="${escapeHTML(value)}" aria-pressed="${selectedTaxonomy.has(value)}">${escapeHTML(value)}</button>`
     ).join('');
-    card.innerHTML = `<button class="game-main" type="button" aria-label="View details for ${escapeHTML(game.name)}">${img(game.image, game.name, 'cover')}<div class="name">${escapeHTML(game.name)}</div><div class="meta"><span class="meta-item" aria-label="${escapeHTML(playerRange)} players"><svg class="meta-icon" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="4.5" r="2.5"></circle><path d="M3 14v-1.5a5 5 0 0 1 10 0V14z"></path></svg><span>${escapeHTML(playerRange)}</span></span><span class="meta-item" aria-label="${escapeHTML(minutes(game))}"><svg class="meta-icon" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.25"></circle><path d="M8 4v4l2.5 1.5"></path></svg><span>${escapeHTML(playtime)}</span></span><div class="game-languages" aria-label="Supported languages">${languageFlags(game.languages || [])}</div></div></button><div class="card-taxonomy" aria-label="Categories and mechanics">${taxonomyOptions}</div>`;
+    card.innerHTML = `<button class="game-main" type="button" aria-label="View details for ${escapeHTML(game.name)}">${img(game.thumbnail || game.image, game.name, 'cover', game.thumbnail ? '' : game.id)}<div class="name">${escapeHTML(game.name)}</div><div class="meta"><span class="meta-item" aria-label="${escapeHTML(playerRange)} players"><svg class="meta-icon" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="4.5" r="2.5"></circle><path d="M3 14v-1.5a5 5 0 0 1 10 0V14z"></path></svg><span>${escapeHTML(playerRange)}</span></span><span class="meta-item" aria-label="${escapeHTML(minutes(game))}"><svg class="meta-icon" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.25"></circle><path d="M8 4v4l2.5 1.5"></path></svg><span>${escapeHTML(playtime)}</span></span><div class="game-languages" aria-label="Supported languages">${languageFlags(game.languages || [])}</div></div></button><div class="card-taxonomy" aria-label="Categories and mechanics">${taxonomyOptions}</div>`;
     card.querySelector('.game-main').addEventListener('click', () => openGame(game));
     gameGrid.append(card);
   }
